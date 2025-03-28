@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <iostream>
 #include <memory>
@@ -12,7 +13,10 @@ using s8  = int8_t;
 using s16 = int16_t;
 
 
-auto read_binary(const char* file_path, size_t &size) {
+static u8 MEMORY[1 << 16];
+
+
+void read_instructions(const char* file_path, size_t &size) {
     auto file = fopen(file_path, "rb");
     if (file == nullptr)
         throw std::runtime_error{std::format(
@@ -24,22 +28,21 @@ auto read_binary(const char* file_path, size_t &size) {
     size = ftell(file);
     rewind(file);
 
-    auto data  = std::make_unique<u8[]>(size);
-    fread(data.get(), 1, size, file);
+    fread(MEMORY, 1, size, file);
     fclose(file);
-    return data;
 }
 
 
-static struct {
+static constexpr struct {
     char value[3];
-} REG_ENCODING[2][8] = {
+} REG_ENCODING[2][12] = {
     {{"al"}, {"cl"}, {"dl"}, {"bl"}, {"ah"}, {"ch"}, {"dh"}, {"bh"}},  // w = 0
-    {{"ax"}, {"cx"}, {"dx"}, {"bx"}, {"sp"}, {"bp"}, {"si"}, {"di"}}   // w = 1
+    {{"ax"}, {"cx"}, {"dx"}, {"bx"}, {"sp"}, {"bp"}, {"si"}, {"di"},   // w = 1
+     {"es"}, {"cs"}, {"ss"}, {"ds"}}  // reg mem, also wide
 };
 
 
-static struct {
+static constexpr struct {
     char value[8];
 } MEM_ENCODING[8] = {
     {"bx + si"},
@@ -53,12 +56,12 @@ static struct {
 };
 
 
-static struct {
+static constexpr struct {
     char value[4];
 } OPS_ENCODING[8] {"add", "or", "adc", "sbb", "and", "sub", "", "cmp"};
 
 
-struct {
+static constexpr struct {
     char value[5];
 } JUMP_ENCODING[16] {
     {"jo"}, {"jno"}, {"jb"}, {"jnb"}, {"je"}, {"jne"}, {"jbe"}, {"jnbe"},
@@ -66,9 +69,40 @@ struct {
 };
 
 
-struct {
+static constexpr struct {
     char value[7];
 } LOOP_ENCODING[4] { {"loopnz"}, {"loopz"}, {"loop"}, {"jcxz"} };
+
+
+static u16 REGS[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+
+static u8 *const HALF_REGS[8] = {
+    reinterpret_cast<u8*>(&REGS[0]),
+    reinterpret_cast<u8*>(&REGS[1]),
+    reinterpret_cast<u8*>(&REGS[2]),
+    reinterpret_cast<u8*>(&REGS[3]),
+    reinterpret_cast<u8*>(&REGS[0]) + 1,
+    reinterpret_cast<u8*>(&REGS[1]) + 1,
+    reinterpret_cast<u8*>(&REGS[2]) + 1,
+    reinterpret_cast<u8*>(&REGS[3]) + 1,
+};
+
+
+enum Flags { Sign, Zero, Parity };
+
+
+// for now only parity, zero and sign
+static constexpr char FLAG_NAMES[16][3] {
+    {"S"}, {"Z"}, {"P"}
+};
+
+
+// XXXXXXXXXXXXXPZS
+static u16 FLAGS {0};
+
+
+static u16 IP {0};
 
 
 struct Reg {
@@ -167,6 +201,206 @@ std::string to_string(const Instr &instr) {
     if (instr.reversed)
         return std::format("{}{} {}, {}", instr.instr, suffix_instr, op1, op0);
     return std::format("{}{} {}, {}{}", instr.instr, suffix_instr, op0, prefix_imm, op1);
+}
+
+
+std::string print_reg_val(const struct Reg &reg) {
+    char hex[7];
+    if (reg.w == 1)
+        sprintf(hex, "%x", REGS[reg.val]);
+    else
+        sprintf(hex, "%x", REGS[reg.val % 4]);
+    return std::string(hex);
+}
+
+
+void print_one_reg(const char* name, const u16 &value) {
+    char hex[2];
+    std::cout << "\t\t" << name << ": 0x";
+    for (s8 h = 3; h >= 0; --h) {
+        sprintf(hex, "%x", (value >> (h * 4)) & 0xF);
+        std::cout << hex;
+    }
+    std::cout << " (" << value << ")" << std::endl;
+}
+
+
+void print_all_regs() {
+    std::cout << "Final registers:" << std::endl;
+    print_one_reg("ip", IP);
+    for (u8 i = 0; i < 12; ++i)
+        print_one_reg(REG_ENCODING[1][i].value, REGS[i]);
+}
+
+
+template<typename U>
+void update_flags(const U &val, const u8 &w) {
+    u8 nbbits = (w + 1) * 8;
+    FLAGS = 0;
+    FLAGS |= ((u16)val == 0) << Flags::Zero;
+    FLAGS |= ((u16)((val >> (nbbits - 1)) & 1)) << Flags::Sign;
+    FLAGS |= ((u16)(1 ^ __builtin_parity(val & 0xFF))) << Flags::Parity;
+}
+
+
+u16 get_addr(const struct Mem &mem) {
+    u16 addr {0};
+    if (mem.has_reg) {
+        switch(mem.reg) {
+            case 0:  // bx + si
+                addr += REGS[3] + REGS[6];  break;
+            case 1:  // bx + di
+                addr += REGS[3] + REGS[7];  break;
+            case 2:  // bp + si
+                addr += REGS[5] + REGS[6];  break;
+            case 3:  // bp + di
+                addr += REGS[5] + REGS[7];  break;
+            case 4:  // si
+                addr += REGS[6];            break;
+            case 5:  // di
+                addr += REGS[7];            break;
+            case 6:  // bp
+                addr += REGS[5];            break;
+            case 7:  // bx
+                addr += REGS[3];            break;
+        }
+    }
+    if (mem.has_disp) {
+        addr += mem.disp;
+    }
+    return addr;
+}
+
+
+u16 load(const struct Mem &mem) {
+    u16 addr {get_addr(mem)};
+    return ((u16)MEMORY[addr]) + (((u16)MEMORY[addr + 1]) << 8);
+}
+
+
+void store(const struct Mem &mem, const u16 &val) {
+    u16 addr {get_addr(mem)};
+    MEMORY[addr] = (u8)(val & 0xFF);
+    MEMORY[addr + 1] = (u8)((val >> 8) &0xFF);
+}
+
+
+void apply_instr(const std::string &instr, const OpType &dest_t, const OpType &src_t, const Op &dest, const Op &src) {
+    u16 src_val;
+    if(src_t == Imm)
+        src_val = src.imm.val;
+    else if (src_t == Mem)
+        src_val = load(src.mem);
+    else
+        src_val = src.reg.w == 1 ? REGS[src.reg.val] : (u16)*HALF_REGS[src.reg.val];
+
+    u16 dest_val;
+    if (dest_t == Mem)
+        dest_val = load(dest.mem);
+    else if (dest_t == Reg)
+        dest_val = dest.reg.w == 1 ? REGS[dest.reg.val] : (u16)*HALF_REGS[dest.reg.val];
+    else
+        throw std::runtime_error{"Should not get to apply_instr in the instruction destination is an immediate"};
+
+    if (instr == "mov") {
+        dest_val = src_val;
+        goto update_values;
+    } else if (instr == "add") {
+        dest_val += src_val;
+        goto update_flags_dest;
+    } else if (instr == "sub") {
+        dest_val -= src_val;
+        goto update_flags_dest;
+    } else if (instr == "cmp") {
+        if (dest_t == Reg && dest.reg.w == 0)
+            update_flags((u8)dest_val - (u8)src_val, 0);
+        else
+            update_flags(dest_val - src_val, 1);
+    } else {
+        throw std::runtime_error(std::format("Instruction application not implemented: {}", instr));
+    }
+    return;
+
+    update_flags_dest:
+    update_flags(dest_val, dest_t == Reg ? dest.reg.w : 1);
+
+    update_values:
+    if (dest_t == Mem)
+        store(dest.mem, dest_val);
+    else {
+        if (dest.reg.w == 1)
+            REGS[dest.reg.val] = dest_val;
+        else
+            *HALF_REGS[dest.reg.val] = (u8)dest_val;
+    }
+}
+
+
+void cond_jump(const std::string &instr, const struct Imm &imm, const std::string jump, const std::string neg_jump, Flags flag) {
+    if (instr == jump) {
+        if((FLAGS >> flag & 1) == 1)
+            IP += (s16)imm.val;
+    } else if (instr == neg_jump) {
+        if((FLAGS >> flag & 1) == 0)
+            IP += (s16)imm.val;
+    }
+}
+
+
+void apply_jump(const std::string &instr, const Op &dest) {
+    cond_jump(instr, dest.imm, "je", "jne", Flags::Zero);
+    cond_jump(instr, dest.imm, "jp", "jnp", Flags::Parity);
+    cond_jump(instr, dest.imm, "js", "jns", Flags::Sign);
+    // others not defined, programs containing them may loop
+}
+
+
+std::string flags_to_string(const u16 &flags) {
+    std::string ret;
+    for(int flag = Flags::Sign; flag <= Flags::Parity; ++flag)
+        if (((flags >> flag) & 1) == 1)
+            ret += FLAG_NAMES[flag];
+    return ret;
+}
+
+
+std::string flag_change(const u16 &prev, const u16 &next) {
+    if (prev == next)
+        return "";
+
+    return std::format(" flags:{}->{}", flags_to_string(prev), flags_to_string(next));
+}
+
+
+std::string ip_change(const u16 &prev_IP) {
+    char prev[7];
+    char next[7];
+    sprintf(prev, "%x", prev_IP);
+    sprintf(next, "%x", IP);
+    return std::format("ip:0x{}->0x{}", prev, next);
+}
+
+
+std::string sim_instr(const Instr &instr, const u16 &prev_IP) {
+    const OpType& dest_t = instr.reversed ? instr.op1_t : instr.op0_t;
+    const OpType& src_t  = instr.reversed ? instr.op0_t : instr.op1_t;
+    const Op& dest = instr.reversed ? instr.op1 : instr.op0;
+    const Op& src  = instr.reversed ? instr.op0 : instr.op1;
+    std::string dis = to_string(instr);
+    std::string reg = REG_ENCODING[dest.reg.w][dest.reg.val].value;
+    u16 flags = FLAGS;
+    std::string reg_change;
+    if (dest_t == Reg) {
+        std::string init = print_reg_val(dest.reg);
+        apply_instr(instr.instr, dest_t, src_t, dest, src);
+        std::string final = print_reg_val(dest.reg);
+        reg_change = init != final ? std::format(" {}:0x{}->0x{}", reg, init, final) : "";
+    } else if (dest_t == Imm) {
+        apply_jump(instr.instr, dest);
+    } else if (dest_t == Mem) {
+        apply_instr(instr.instr, dest_t, src_t, dest, src);
+    }
+    return std::format("{} ; {}{}{}", dis, ip_change(prev_IP), reg_change, flag_change(flags, FLAGS));
 }
 
 
@@ -285,6 +519,23 @@ void mem_to_acc(const u8 *&b, Instr &i) {
 
 void acc_to_mem(const u8 *&b, Instr &i) {
     mem_to_acc(b, i);
+    i.reversed = true;
+}
+
+
+void regmem_to_seg(const u8 *&b, Instr &i) {
+    u8 mod, sr, rm; ++b;
+    lf(b, mod, 6, 2); lf(b, sr, 3, 2); lf(b, rm, 0, 3); ++b;
+    instr_reg_op0(i, 1, 8 + sr);  // SR is wide, and kept here after other wide regs
+    instr_rm_op1(i, 1, mod, rm);
+    disp_op1(b, i, mod, rm);
+    i.reversed = false;
+    i.instr = "mov";
+}
+
+
+void seg_to_regmem(const u8 *&b, Instr &i) {
+    regmem_to_seg(b, i);
     i.reversed = true;
 }
 
@@ -471,9 +722,9 @@ static void(*disassembly_table[256])(const u8 *&, Instr &instr) {
     /* 10001001 */  move_regmem_to_from_reg,
     /* 10001010 */  move_regmem_to_from_reg,
     /* 10001011 */  move_regmem_to_from_reg,
-    /* 10001100 */  unimplemented,
+    /* 10001100 */  seg_to_regmem,
     /* 10001101 */  unimplemented,
-    /* 10001110 */  unimplemented,
+    /* 10001110 */  regmem_to_seg,
     /* 10001111 */  unimplemented,
     /* 10010000 */  unimplemented,
     /* 10010001 */  unimplemented,
@@ -590,22 +841,50 @@ static void(*disassembly_table[256])(const u8 *&, Instr &instr) {
 };
 
 
-void disassembly(const char *file_path) {
+void disassembly(const char *file_path, const bool &simulation) {
     size_t size;
-    auto binary = read_binary(file_path, size);
+    read_instructions(file_path, size);
     size_t offset;
 
     std::cout << "; " << file_path << std::endl;
     Instr instr;
-    for(const u8 *b = binary.get(); b < binary.get() + size;) {
+    const u8 *b;
+    u16 prev_IP;
+    while(static_cast<size_t>(IP) < size) {
+        b = &MEMORY[IP];
         disassembly_table[*b](b, instr);
-        std::cout << to_string(instr) << std::endl;
+        prev_IP = IP;
+        IP += (b - &MEMORY[IP]);  // add the amount of bytes read for disassembly
+        if (simulation)
+            std::cout << sim_instr(instr, prev_IP) << std::endl;
+        else
+            std::cout << to_string(instr) << std::endl;
+    }
+    if(simulation) {
+        std::cout << std::endl;
+        print_all_regs();
+        std::cout << "\tflags: " << flags_to_string(FLAGS) << std::endl;
     }
 }
 
 
 int main(int argc, char** argv) {
+    memset(MEMORY, 0, 1 << 16);
     if (argc < 2)
         throw std::runtime_error{"No binary input file provided"};
-    disassembly(argv[1]);
+    bool simulation {false};
+    bool dump {false};
+    for (u8 i = 2; i < argc; ++i)
+        if (std::string{argv[i]} == "-s")
+            simulation = true;
+        else if (std::string{argv[i]} == "-d")
+            dump = true;
+        else
+            throw std::runtime_error{"Invalid option"};
+    disassembly(argv[1], simulation);
+    if (dump) {
+        auto file = fopen("dump.data", "wb");
+        assert(fwrite(MEMORY, 1, 1 << 16, file) == 1 << 16);
+        fclose(file);
+    }
 }

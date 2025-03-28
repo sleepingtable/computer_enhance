@@ -1,5 +1,5 @@
 sim8086:
-	clang++ -std=c++23 disassembly.cpp -o disassembly
+	clang++ -std=c++23 -march=native -O3 disassembly.cpp -o disassembly
 
 clean:
 	rm disassembly
