@@ -76,6 +76,8 @@ static constexpr struct {
 
 static u16 REGS[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
+static u16 CLOCKS {0};
+
 
 static u8 *const HALF_REGS[8] = {
     reinterpret_cast<u8*>(&REGS[0]),
@@ -401,6 +403,75 @@ std::string sim_instr(const Instr &instr, const u16 &prev_IP) {
         apply_instr(instr.instr, dest_t, src_t, dest, src);
     }
     return std::format("{} ; {}{}{}", dis, ip_change(prev_IP), reg_change, flag_change(flags, FLAGS));
+}
+
+
+u16 ea(const struct Mem &mem) {
+    if (mem.has_disp && !mem.has_reg)
+        return 6;
+    if (mem.has_reg && (!mem.has_disp || mem.disp == 0)) {
+        if (mem.reg > 3)
+            return 5;
+        if (mem.reg == 0 || mem.reg == 3)
+            return 7;
+        return 8;
+    }
+    if (mem.reg > 3)
+        return 9;
+    if (mem.reg == 0 || mem.reg == 3)
+        return 11;
+    return 12;
+}
+
+
+u16 estimate_clocks_mov(const OpType &dest_t, const OpType &src_t, const Op &dest, const Op &src) {
+    // ignoring segment registers here
+    if (dest_t == Mem) {
+        if (src_t == Reg) {
+            if (src.reg.val == 0 || (src.reg.val == 4 && src.reg.w == 0))
+                return 10;                  // mem <- acc
+            return 9 + ea(dest.mem);        // mem <- reg
+        }
+        return 10 + ea(dest.mem);           // mem <- imm
+    }
+    if (src_t == Mem && (dest.reg.val == 0 || (src.reg.val == 4 && src.reg.w == 0)))
+        return 10;                          // acc <- mem
+    if (src_t == Reg)
+        return 2;                           // reg <- reg
+    if (src_t == Imm)
+        return 4;                           // reg <- imm
+    return 8 + ea(src.mem);                 // reg <- mem
+}
+
+
+u16 estimate_clocks_add(const OpType &dest_t, const OpType &src_t, const Op &dest, const Op &src) {
+    if (dest_t == Mem) {
+        if (src_t == Imm)
+            return 17 + ea(dest.mem);       // mem += imm
+        return 16 + ea(dest.mem);           // mem += reg
+    }
+    if (src_t == Mem)
+        return 9 + ea(src.mem);             // reg += mem
+    if (src_t == Reg)
+        return 3;                           // reg += reg
+    return 4;                               // reg += imm
+}
+
+std::string estimate_clocks(const Instr &instr) {
+    const OpType& dest_t = instr.reversed ? instr.op1_t : instr.op0_t;
+    const OpType& src_t  = instr.reversed ? instr.op0_t : instr.op1_t;
+    const Op& dest = instr.reversed ? instr.op1 : instr.op0;
+    const Op& src  = instr.reversed ? instr.op0 : instr.op1;
+    std::string dis = to_string(instr);
+    u16 clocks;
+    if (instr.instr == "mov")
+        clocks = estimate_clocks_mov(dest_t, src_t, dest, src);
+    else if (instr.instr == "add")
+        clocks = estimate_clocks_add(dest_t, src_t, dest, src);
+    else
+        throw std::runtime_error{"Clocks not implemented for this instruction"};
+    CLOCKS += clocks;
+    return std::format("{} ; Clocks: +{} = {}", dis, clocks, CLOCKS);
 }
 
 
@@ -841,7 +912,7 @@ static void(*disassembly_table[256])(const u8 *&, Instr &instr) {
 };
 
 
-void disassembly(const char *file_path, const bool &simulation) {
+void disassembly(const char *file_path, const bool &simulation, const bool &clocks) {
     size_t size;
     read_instructions(file_path, size);
     size_t offset;
@@ -857,6 +928,8 @@ void disassembly(const char *file_path, const bool &simulation) {
         IP += (b - &MEMORY[IP]);  // add the amount of bytes read for disassembly
         if (simulation)
             std::cout << sim_instr(instr, prev_IP) << std::endl;
+        else if (clocks)
+            std::cout << estimate_clocks(instr) << std::endl;
         else
             std::cout << to_string(instr) << std::endl;
     }
@@ -874,14 +947,19 @@ int main(int argc, char** argv) {
         throw std::runtime_error{"No binary input file provided"};
     bool simulation {false};
     bool dump {false};
+    bool clocks {false};
     for (u8 i = 2; i < argc; ++i)
         if (std::string{argv[i]} == "-s")
             simulation = true;
         else if (std::string{argv[i]} == "-d")
             dump = true;
+        else if (std::string{argv[i]} == "-c")
+            clocks = true;
         else
             throw std::runtime_error{"Invalid option"};
-    disassembly(argv[1], simulation);
+    if (simulation && clocks)
+        throw std::runtime_error{"Cannot both simulate and estimate clocks (was lazy)"};
+    disassembly(argv[1], simulation, clocks);
     if (dump) {
         auto file = fopen("dump.data", "wb");
         assert(fwrite(MEMORY, 1, 1 << 16, file) == 1 << 16);
