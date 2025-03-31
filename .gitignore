@@ -4,3 +4,6 @@ part1/gen_table*
 part1/sim8086
 part1/tests/listing_00*
 part1/tests/test_*
+
+part2/haversine_generator
+part2/haversine_input.json
