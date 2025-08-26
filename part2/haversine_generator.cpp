@@ -4,6 +4,7 @@
 #include <iostream>
 #include <random>
 #include <stdexcept>
+#include <tuple>
 
 using f64 = double;
 using u64 = uint64_t;
