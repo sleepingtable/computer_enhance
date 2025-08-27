@@ -1,9 +1,4 @@
-part1/8086_family_Users_Manual_1_.pdf
-part1/dump.data
-part1/gen_table*
-part1/sim8086
-part1/tests/listing_00*
-part1/tests/test_*
-
-part2/haversine_generator
-part2/haversine_input.json
+part*/haversine
+part*/haversine_profiling
+part*/haversine_generator
+part*/haversine_input.json
