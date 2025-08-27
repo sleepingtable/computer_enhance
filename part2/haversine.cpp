@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <iomanip>
 #include <iostream>
 #include <immintrin.h>
 #include <sstream>
@@ -33,17 +34,20 @@ u64 read_os_timer() {
 void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const u64 &rdtsc_tot, const f64 &mult_rdtsc,
            const u64 &rdtsc_duration_inclusive = 0, const u64 &hit_count = 0) {
     std::cout
-        << name;
+        << std::setw(20) << name;
 
     if (hit_count != 0)
-        std::cout << "[" << hit_count << "]";
+        std::cout << "[" << std::setw(10) << hit_count << "]";
 
     std::cout
-        << ": " << rdtsc_duration_exclusive * mult_rdtsc << "s"
-        << " (" << static_cast<float>(rdtsc_duration_exclusive) / static_cast<float>(rdtsc_tot) * 100 << "%)";
+        << std::setprecision(3)
+        << ": " << std::setw(8) << rdtsc_duration_exclusive * mult_rdtsc << "s"
+        << " (" << std::setw(8) << static_cast<float>(rdtsc_duration_exclusive) / static_cast<float>(rdtsc_tot) * 100 << "%)";
 
     if (rdtsc_duration_inclusive != 0)
         std::cout
+            << std::setprecision(3)
+            << std::setw(8)
             << " (" << static_cast<float>(rdtsc_duration_inclusive) / static_cast<float>(rdtsc_tot) * 100 << "% w/ children)";
 
     std::cout << std::endl;
