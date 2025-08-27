@@ -8,10 +8,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <vector>
 
 using f64 = double;
+using u8 = uint8_t;
 using u32 = uint32_t;
 using u64 = uint64_t;
 
@@ -32,11 +34,11 @@ u64 read_os_timer() {
 
 
 void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const u64 &rdtsc_tot, const f64 &mult_rdtsc,
-           const u64 &rdtsc_duration_inclusive = 0, const u64 &hit_count = 0) {
+           const u64 &rdtsc_duration_inclusive = 0, const u64 &hit_count = 0, const u64 &processed_bytes = 0) {
     std::cout
         << std::setw(20) << name;
 
-    if (hit_count != 0)
+    if (hit_count > 0)
         std::cout << "[" << std::setw(10) << hit_count << "]";
 
     std::cout
@@ -44,11 +46,23 @@ void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const u
         << ": " << std::setw(8) << rdtsc_duration_exclusive * mult_rdtsc << "s"
         << " (" << std::setw(8) << static_cast<float>(rdtsc_duration_exclusive) / static_cast<float>(rdtsc_tot) * 100 << "%)";
 
-    if (rdtsc_duration_inclusive != 0)
+    if (rdtsc_duration_inclusive > 0)
         std::cout
             << std::setprecision(3)
-            << std::setw(8)
-            << " (" << static_cast<float>(rdtsc_duration_inclusive) / static_cast<float>(rdtsc_tot) * 100 << "% w/ children)";
+            << " (" << std::setw(8) << static_cast<float>(rdtsc_duration_inclusive) / static_cast<float>(rdtsc_tot) * 100 << "% w/ children)";
+
+    if (processed_bytes > 0) {
+        f64 megabyte = 1024. * 1024.;
+        f64 gigabyte = megabyte * 1024.;
+        f64 seconds = static_cast<f64>(rdtsc_duration_inclusive) * mult_rdtsc;
+        f64 bytes_per_second = processed_bytes / seconds;
+        f64 megabytes = processed_bytes / megabyte;
+        f64 gigabytes_per_second = bytes_per_second / gigabyte;
+        std::cout
+            << "  " << std::setprecision(3)
+            << std::setw(8) << megabytes << "MB at "
+            << std::setw(8) << gigabytes_per_second << "GB/s";
+    }
 
     std::cout << std::endl;
 }
@@ -58,11 +72,12 @@ struct ProfilingItem {
     u64 rdtsc_elapsed_inclusive {0};
     u64 rdtsc_elapsed_exclusive {0};
     u64 hit_count {0};
+    u64 processed_bytes {0};
     char const *name {nullptr};
 
     void print(const u64 &rdtsc_tot, const f64 &mult_rdtsc) const {
         if (name != nullptr)
-            ::print(name, rdtsc_elapsed_exclusive, rdtsc_tot, mult_rdtsc, rdtsc_elapsed_inclusive, hit_count);
+            ::print(name, rdtsc_elapsed_exclusive, rdtsc_tot, mult_rdtsc, rdtsc_elapsed_inclusive, hit_count, processed_bytes);
     }
 };
 
@@ -113,11 +128,13 @@ struct ProfilingBlock {
     u32 parent_index;
     u64 rdtsc_begin;
     u64 old_rdtsc_inclusive;
-    ProfilingBlock(char const *name, u32 index) :
-        name{name}, index{index}, parent_index{CURRENT_INSTRUMENT_INDEX},
-        old_rdtsc_inclusive{(INSTRUMENTATION.items + index)->rdtsc_elapsed_inclusive}
+    ProfilingBlock(char const *name, u32 index, u64 bytes_count = 0) :
+        name{name}, index{index}, parent_index{CURRENT_INSTRUMENT_INDEX}
     {
         CURRENT_INSTRUMENT_INDEX = index;
+        ProfilingItem* item = INSTRUMENTATION.items + index;
+        old_rdtsc_inclusive = item->rdtsc_elapsed_inclusive;
+        item->processed_bytes += bytes_count;
         rdtsc_begin = __rdtsc();
     }
     ~ProfilingBlock() {
@@ -141,10 +158,12 @@ struct ProfilingBlock {
 #define NAME_CONCAT(A, B) NAME_CONCAT2(A, B)
 
 #if PROFILER
-#define PROFILE_BLOCK(name) ProfilingBlock NAME_CONCAT(block, __LINE__){name, __COUNTER__ + 1};
+#define PROFILE_BANDWIDTH(name, byte_count) ProfilingBlock NAME_CONCAT(block, __LINE__){name, __COUNTER__ + 1, byte_count};
+#define PROFILE_BLOCK(name) PROFILE_BANDWIDTH(name, 0);
 #define PROFILE_FUNC PROFILE_BLOCK(__FUNCTION__);
 #define PROFILE_FUNC_OMP_MASTER _Pragma("omp master") PROFILE_FUNC;
 #else
+#define PROFILE_BANDWIDTH(...)
 #define PROFILE_BLOCK(...)
 #define PROFILE_FUNC
 #define PROFILE_FUNC_OMP_MASTER
@@ -197,20 +216,58 @@ struct points {
 };
 
 
-void get_char(FILE* file, char* chr) {
-    if(int c = fgetc(file); c != EOF)
-        *chr = static_cast<char>(c);
+struct Data {
+    u8 *data {nullptr};
+    u64 size {0};
+    u64 cursor {0};
+};
+
+
+static Data DATA;
+
+
+void free_data() {
+    PROFILE_FUNC;
+    free(DATA.data);
+    DATA.data = nullptr;
+    DATA.size = 0;
+    DATA.cursor = 0;
+}
+
+
+void read_file(const char* filename) {
+    PROFILE_FUNC;
+    FILE *file = fopen(filename, "rb");
+    if (file) {
+        struct stat _stat;
+        stat(filename, &_stat);
+        DATA.size = _stat.st_size;
+        DATA.data = static_cast<u8*>(malloc(_stat.st_size));
+
+        PROFILE_BANDWIDTH("fread", DATA.size);
+        if (fread(DATA.data, DATA.size, 1, file) != 1) {
+            free_data();
+            throw std::runtime_error{"Failed to fread"};
+        }
+    }
+    fclose(file);
+}
+
+
+void get_char(char* chr) {
+    if(DATA.cursor < DATA.size)
+        *chr = static_cast<char>(DATA.data[DATA.cursor++]);
     else
         *chr = '\0';
 }
 
 
-char get_next_token(FILE* file) {
+char get_next_token() {
     PROFILE_FUNC;
     char next;
-    get_char(file, &next);
+    get_char(&next);
     while(next == ' ' || next == '\n' || next == '\t')
-        get_char(file, &next);
+        get_char(&next);
     assert(
         next == '\0' ||
         next == ',' ||
@@ -225,61 +282,62 @@ char get_next_token(FILE* file) {
 }
 
 
-std::string get_key(FILE* file) {
+std::string get_key() {
     PROFILE_FUNC;
     char next = {' '};
     while(next != '"')
-        get_char(file, &next);
+        get_char(&next);
     std::stringstream content;
-    get_char(file, &next);
+    get_char(&next);
     while(next != '"') {
         content << next;
-        get_char(file, &next);
+        get_char(&next);
     }
-    get_char(file, &next);
+    get_char(&next);
     assert(next == ':');
     return content.str();
 }
 
 
-f64 get_value_f64(FILE* file) {
+f64 get_value_f64() {
     PROFILE_FUNC;
     char next = {' '};
     while(next == ' ')
-        get_char(file, &next);
+        get_char(&next);
     std::stringstream content;
     while(next != ',' && next != '}') {
         content << next;
-        get_char(file, &next);
+        get_char(&next);
     }
     return std::stod(content.str());
 }
 
 
-void add_point(FILE* file, points &ps) {
+void add_point(points &ps) {
     PROFILE_FUNC;
-    assert(get_next_token(file) == '{');
-    assert(get_key(file) == "x0");
-    ps.x0.emplace_back(get_value_f64(file));
-    assert(get_key(file) == "y0");
-    ps.y0.emplace_back(get_value_f64(file));
-    assert(get_key(file) == "x1");
-    ps.x1.emplace_back(get_value_f64(file));
-    assert(get_key(file) == "y1");
-    ps.y1.emplace_back(get_value_f64(file));
+    assert(get_next_token() == '{');
+    assert(get_key() == "x0");
+    ps.x0.emplace_back(get_value_f64());
+    assert(get_key() == "y0");
+    ps.y0.emplace_back(get_value_f64());
+    assert(get_key() == "x1");
+    ps.x1.emplace_back(get_value_f64());
+    assert(get_key() == "y1");
+    ps.y1.emplace_back(get_value_f64());
 }
 
 
 points get_points(std::string json_file_path) {
     PROFILE_FUNC;
-    FILE* file = fopen(json_file_path.c_str(), "r");
-    assert(get_next_token(file) == '{');
-    assert(get_key(file) == "pairs");
-    assert(get_next_token(file) == '[');
+    read_file(json_file_path.c_str());
+    assert(get_next_token() == '{');
+    assert(get_key() == "pairs");
+    assert(get_next_token() == '[');
     points ps;
-    add_point(file, ps);
-    while(get_next_token(file) == ',')
-        add_point(file, ps);
+    add_point(ps);
+    while(get_next_token() == ',')
+        add_point(ps);
+    free_data();
     return ps;
 }
 
