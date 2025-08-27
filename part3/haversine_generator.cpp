@@ -89,7 +89,7 @@ int main(int argc, char** argv)
     u64 seed = strtoul(argv[2], nullptr, 10);
     u64 nbsamples = strtoul(argv[3], nullptr, 10);
 
-    std::ofstream output("haversine_input.json");
+    std::ofstream output(argc == 5 ? argv[4] : "haversine_input.json");
     output << "{\"pairs\": \[" << std::endl;
 
     f64 sum{0.};

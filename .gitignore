@@ -2,3 +2,5 @@ part*/haversine
 part*/haversine_profiling
 part*/haversine_generator
 part*/haversine_input.json
+part3/haversine_large_input.json
+part3/fread_test
