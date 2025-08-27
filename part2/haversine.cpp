@@ -15,6 +15,11 @@ using u32 = uint32_t;
 using u64 = uint64_t;
 
 
+#ifndef PROFILER
+#define PROFILER 0
+#endif
+
+
 static f64 EARTH_RADIUS {6372.8};
 
 
@@ -25,10 +30,16 @@ u64 read_os_timer() {
 }
 
 
-void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const u64 &rdtsc_tot, const f64 &mult_rdtsc, const u64 &rdtsc_duration_inclusive = 0) {
+void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const u64 &rdtsc_tot, const f64 &mult_rdtsc,
+           const u64 &rdtsc_duration_inclusive = 0, const u64 &hit_count = 0) {
     std::cout
-        << name << ": "
-        << rdtsc_duration_exclusive * mult_rdtsc << "s"
+        << name;
+
+    if (hit_count != 0)
+        std::cout << "[" << hit_count << "]";
+
+    std::cout
+        << ": " << rdtsc_duration_exclusive * mult_rdtsc << "s"
         << " (" << static_cast<float>(rdtsc_duration_exclusive) / static_cast<float>(rdtsc_tot) * 100 << "%)";
 
     if (rdtsc_duration_inclusive != 0)
@@ -46,10 +57,8 @@ struct ProfilingItem {
     char const *name {nullptr};
 
     void print(const u64 &rdtsc_tot, const f64 &mult_rdtsc) const {
-        //if (name != nullptr)
-        //    std::cout << rdtsc_elapsed << " -- " << rdtsc_elapsed_children << std::endl;
         if (name != nullptr)
-            ::print(name, rdtsc_elapsed_exclusive, rdtsc_tot, mult_rdtsc, rdtsc_elapsed_inclusive);
+            ::print(name, rdtsc_elapsed_exclusive, rdtsc_tot, mult_rdtsc, rdtsc_elapsed_inclusive, hit_count);
     }
 };
 
@@ -81,7 +90,6 @@ struct Instrumentation {
         end();
         u64 rdtsc_tot = rdtsc_end - rdtsc_begin;
         f64 mult_rdtsc = static_cast<f64>(os_end - os_begin) / static_cast<f64>(rdtsc_tot);
-        std::cout << rdtsc_tot << std::endl;
         print(rdtsc_tot, mult_rdtsc);
         for (const auto &el : items)
             el.print(rdtsc_tot, mult_rdtsc);
@@ -127,8 +135,16 @@ struct ProfilingBlock {
 
 #define NAME_CONCAT2(A, B) A##B
 #define NAME_CONCAT(A, B) NAME_CONCAT2(A, B)
+
+#if PROFILER
 #define PROFILE_BLOCK(name) ProfilingBlock NAME_CONCAT(block, __LINE__){name, __COUNTER__ + 1};
 #define PROFILE_FUNC PROFILE_BLOCK(__FUNCTION__);
+#define PROFILE_FUNC_OMP_MASTER _Pragma("omp master") PROFILE_FUNC;
+#else
+#define PROFILE_BLOCK(...)
+#define PROFILE_FUNC
+#define PROFILE_FUNC_OMP_MASTER
+#endif
 
 
 static f64 square(f64 a)
@@ -149,7 +165,7 @@ static f64 reference_haversine(f64 x0, f64 x1, f64 y0, f64 y1,
        Instead, it attempts to follow, as closely as possible, the formula used in the real-world
        question on which these homework exercises are loosely based.
     */
-    PROFILE_FUNC;
+    PROFILE_FUNC_OMP_MASTER;
 
     f64 lat1 = y0;
     f64 lat2 = y1;
@@ -277,7 +293,7 @@ int main(int argc, char** argv) {
     auto ps = get_points(json_file_path);
 
     f64 mean {0};
-//#pragma omp parallel for reduction(+:mean)
+#pragma omp parallel for reduction(+:mean)
     for(u64 i = 0; i < ps.x0.size(); ++i)
         mean += reference_haversine(ps.x0[i], ps.x1[i], ps.y0[i], ps.y1[i]);
 
