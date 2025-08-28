@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <immintrin.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 
@@ -28,7 +29,7 @@ u64 read_os_timer() {
 
 void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const f64 &mult_rdtsc,
            const u64 &rdtsc_tot = 0, const u64 &rdtsc_duration_inclusive = 0, const u64 &hit_count = 0,
-           const u64 &processed_bytes = 0) {
+           const u64 &processed_bytes = 0, const f64 &pagefaults = 0) {
     std::cout
         << std::setw(20) << name;
 
@@ -56,9 +57,21 @@ void print(const std::string &name, const u64 &rdtsc_duration_exclusive, const f
         f64 megabytes = processed_bytes / megabyte;
         f64 gigabytes_per_second = bytes_per_second / gigabyte;
         std::cout
-            << "  " << std::setprecision(3)
+            << " " << std::setprecision(3)
             << std::setw(8) << megabytes << "MB at "
             << std::setw(8) << gigabytes_per_second << "GB/s";
+    }
+
+    if (pagefaults > 0) {
+        std::cout << " PF: " << std::setprecision(8)
+            << std::setw(10) << pagefaults;
+
+        if (processed_bytes > 0) {
+            f64 kilobyte = 1024.;
+            f64 kilobytes = processed_bytes / kilobyte;
+            std::cout << " (" << std::setprecision(4)
+                << std::setw(8) << kilobytes / pagefaults << "k/fault)";
+        }
     }
 
     std::cout << std::endl;
@@ -84,9 +97,13 @@ struct RepetitionResult {
     u64 total_time {0};
     u64 max_time {0};
     u64 min_time {0};
+    u64 total_pagefaults {0};
+    u64 pagefaults_max_time {0};
+    u64 pagefaults_min_time {0};
 
-    bool overwrite_if_min(u64 time) {
+    bool overwrite_if_min(u64 time, u64 pagefaults) {
         if (min_time == 0 or time < min_time) {
+            pagefaults_min_time = pagefaults;
             min_time = time;
             return true;
         }
@@ -94,11 +111,15 @@ struct RepetitionResult {
 
     }
 
-    bool add(u64 time) {
+    bool add(u64 time, u64 pagefaults) {
         ++nb_try;
         total_time += time;
-        max_time = std::max(max_time, time);
-        return overwrite_if_min(time);
+        total_pagefaults += pagefaults;
+        if (time > max_time) {
+            max_time = time;
+            pagefaults_max_time = pagefaults;
+        }
+        return overwrite_if_min(time, pagefaults);
     }
 };
 
@@ -126,6 +147,8 @@ struct RepetitionTester {
     u64 total_time {0};
     u64 total_bytes {0};
     u64 repetition_count {0};
+    u64 previous_pagefaults {0};
+    rusage usage;
     bool verbose;
 
     RepetitionResult result;
@@ -136,15 +159,19 @@ struct RepetitionTester {
         verbose{verbose} {}
 
     bool start() {
+        getrusage(RUSAGE_SELF, &usage);
+        previous_pagefaults = static_cast<u64>(usage.ru_minflt);
         last_start = __rdtsc();
         return last_start - started_try_at < try_for;  // continue if true
     }
 
     void stop() {
         u64 elapsed = __rdtsc() - last_start;
+        getrusage(RUSAGE_SELF, &usage);
+        u64 pagefaults = static_cast<u64>(usage.ru_minflt) - previous_pagefaults;
         total_bytes += bytes_count;
         total_time += elapsed;
-        if(result.add(elapsed)) {
+        if(result.add(elapsed, pagefaults)) {
             started_try_at = __rdtsc();
             if (verbose)
                 ::print("new fastest found", elapsed, mult_rdtsc, 0, elapsed, 0, bytes_count);
@@ -155,10 +182,10 @@ struct RepetitionTester {
     ~RepetitionTester() {
         std::cout << "Finished repetition testing " << name << "; total_time: "
             << std::setprecision(4) << static_cast<f64>(total_time) * mult_rdtsc << "s" << std::endl;
-        ::print("fastest", result.min_time, mult_rdtsc, 0, result.min_time, 0, bytes_count);
-        ::print("slowest", result.max_time, mult_rdtsc, 0, result.max_time, 0, bytes_count);
+        ::print("fastest", result.min_time, mult_rdtsc, 0, result.min_time, 0, bytes_count, static_cast<f64>(result.pagefaults_min_time));
+        ::print("slowest", result.max_time, mult_rdtsc, 0, result.max_time, 0, bytes_count, static_cast<f64>(result.pagefaults_max_time));
         u64 average = static_cast<u64>(total_time / repetition_count);
-        ::print("average", average, mult_rdtsc, 0, average, 0, bytes_count);
+        ::print("average", average, mult_rdtsc, 0, average, 0, bytes_count, static_cast<f64>(result.total_pagefaults) / static_cast<f64>(repetition_count));
         std::cout << std::endl;
     }
 };
