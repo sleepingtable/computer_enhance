@@ -1,4 +1,4 @@
-all: haversine haversine_profiling haversine_generator fread_test
+all: haversine haversine_profiling haversine_generator fread_test page_faults write_loop
 
 haversine: haversine.cpp
 	g++ -std=c++20 -Wall -fopenmp haversine.cpp -o haversine
@@ -16,5 +16,13 @@ fread_test: fread_test.cpp
 	g++ -std=c++20 -Wall fread_test.cpp -o fread_test
 	chmod +x fread_test
 
+page_faults: page_faults.cpp
+	clang++ -g -std=c++20 -Wall -O2 page_faults.cpp -o page_faults
+	chmod +x page_faults
+
+write_loop: write_loop.cpp
+	clang++ -g -std=c++20 -Wall -O1 write_loop.cpp nop_loop.obj -o write_loop
+	chmod +x write_loop
+
 clean:
-	rm haversine haversine_profiling haversine_generator fread_test
+	rm haversine haversine_profiling haversine_generator fread_test page_faults write_loop
