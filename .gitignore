@@ -4,3 +4,5 @@ part*/haversine_generator
 part*/haversine_input.json
 part3/haversine_large_input.json
 part3/fread_test
+part3/page_faults*
+part3/write_loop
