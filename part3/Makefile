@@ -20,9 +20,12 @@ page_faults: page_faults.cpp
 	clang++ -g -std=c++20 -Wall -O2 page_faults.cpp -o page_faults
 	chmod +x page_faults
 
-write_loop: write_loop.cpp
+write_loop: write_loop.cpp nop_loop.obj
 	clang++ -g -std=c++20 -Wall -O1 write_loop.cpp nop_loop.obj -o write_loop
 	chmod +x write_loop
+
+nop_loop.obj: nop_loop.asm
+	nasm -f elf64 -o nop_loop.obj nop_loop.asm
 
 clean:
 	rm haversine haversine_profiling haversine_generator fread_test page_faults write_loop
