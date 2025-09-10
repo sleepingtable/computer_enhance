@@ -18,6 +18,9 @@ global MOVAllBytesASM
 global NOPAllBytesASM
 global CMPAllBytesASM
 global DECAllBytesASM
+global nop_1x3_ASM
+global nop_3x1_ASM
+global nop_9x1_ASM
 
 section .text
 
@@ -33,10 +36,8 @@ section .text
 MOVAllBytesASM:
     xor rax, rax
 .loop:
-    ;mov [rdx + rax], al
     mov [rsi + rax], al
     inc rax
-    ;cmp rax, rcx
     cmp rax, rdi
     jb .loop
     ret
@@ -46,7 +47,6 @@ NOPAllBytesASM:
 .loop:
     db 0x0f, 0x1f, 0x00 ; NOTE(casey): This is the byte sequence for a 3-byte NOP
     inc rax
-    ;cmp rax, rcx
     cmp rax, rdi
     jb .loop
     ret
@@ -55,14 +55,49 @@ CMPAllBytesASM:
     xor rax, rax
 .loop:
     inc rax
-    ;cmp rax, rcx
     cmp rax, rdi
     jb .loop
     ret
 
 DECAllBytesASM:
 .loop:
-    ;dec rcx
     dec rdi
     jnz .loop
+    ret
+
+nop_1x3_ASM:
+    xor rax, rax
+.loop:
+    db 0x0f, 0x1f, 0x00
+    inc rax
+    cmp rax, rdi
+    jb .loop
+    ret
+
+nop_3x1_ASM:
+    xor rax, rax
+.loop:
+    nop
+    nop
+    nop
+    inc rax
+    cmp rax, rdi
+    jb .loop
+    ret
+
+nop_9x1_ASM:
+    xor rax, rax
+.loop:
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    inc rax
+    cmp rax, rdi
+    jb .loop
     ret

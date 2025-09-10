@@ -205,78 +205,42 @@ void touch_memory(u8* tab) {
 }
 
 
-extern "C" void MOVAllBytesASM(u64, u8 *);
-extern "C" void NOPAllBytesASM(u64);
-extern "C" void CMPAllBytesASM(u64);
-extern "C" void DECAllBytesASM(u64);
-extern "C" void nop_1x3_ASM(u64);
-extern "C" void nop_3x1_ASM(u64);
-extern "C" void nop_9x1_ASM(u64);
+extern "C" void Write_x1(u8 *, u64);
+extern "C" void Write_x2(u8 *, u64);
+extern "C" void Write_x3(u8 *, u64);
+extern "C" void Write_x4(u8 *, u64);
 
 
 int main() {
-    /*
     {
-        RepetitionTester tester{"touch memory", total_size, 10, false};
+        RepetitionTester tester{"Write_x1", total_size, 10, false};
         while(tester.start()) {
             auto mem = alloc_mem();
-            touch_memory(mem);
+            Write_x1(mem, total_size);
             tester.stop();
         }
     }
     {
-        RepetitionTester tester{"MOVAllBytesASM", total_size, 10, false};
+        RepetitionTester tester{"Write_x2", total_size, 10, false};
         while(tester.start()) {
             auto mem = alloc_mem();
-            MOVAllBytesASM(total_size, mem);
+            Write_x2(mem, total_size);
             tester.stop();
         }
     }
     {
-        RepetitionTester tester{"NOPAllBytesASM", total_size, 10, false};
+        RepetitionTester tester{"Write_x3", total_size, 10, false};
         while(tester.start()) {
-            alloc_mem();
-            NOPAllBytesASM(total_size);
+            auto mem = alloc_mem();
+            Write_x3(mem, total_size);
             tester.stop();
         }
     }
     {
-        RepetitionTester tester{"CMPAllBytesASM", total_size, 10, false};
+        RepetitionTester tester{"Write_x4", total_size, 10, false};
         while(tester.start()) {
-            alloc_mem();
-            CMPAllBytesASM(total_size);
-            tester.stop();
-        }
-    }
-    {
-        RepetitionTester tester{"DECAllBytesASM", total_size, 10, false};
-        while(tester.start()) {
-            alloc_mem();
-            DECAllBytesASM(total_size);
-            tester.stop();
-        }
-    }*/
-    {
-        RepetitionTester tester{"nop_1x3_ASM", total_size, 10, false};
-        while(tester.start()) {
-            alloc_mem();
-            nop_1x3_ASM(total_size);
-            tester.stop();
-        }
-    }
-    {
-        RepetitionTester tester{"nop_3x1_ASM", total_size, 10, false};
-        while(tester.start()) {
-            alloc_mem();
-            nop_3x1_ASM(total_size);
-            tester.stop();
-        }
-    }
-    {
-        RepetitionTester tester{"nop_9x1_ASM", total_size, 10, false};
-        while(tester.start()) {
-            alloc_mem();
-            nop_9x1_ASM(total_size);
+            auto mem = alloc_mem();
+            Write_x4(mem, total_size);
             tester.stop();
         }
     }
