@@ -8,3 +8,5 @@ part3/page_faults*
 part3/write_loop
 part3/read_speed_main
 part3/write_speed_main
+part3/read_widths_main
+part3/cache_size_main
