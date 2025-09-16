@@ -203,21 +203,7 @@ void touch_memory(u8* tab) {
 }
 
 
-extern "C" void Read_mem(u8 *, u64, u64);
-extern "C" void Read_mem2(u8 *, u64, u64);
-extern "C" void Read_mem_32_aligned(u8 *, u64, u64);
-extern "C" void Read_mem_32_unaligned(u8 *, u64, u64);
-
-
-u64 closest_pw2(u64 x) {
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-    x |= (x >> 16);
-    x |= (x >> 32);
-    return x - (x >> 1);
-}
+extern "C" void Read_mem_cache_set(u8 *, u64, u64, u64);
 
 
 int main() {
@@ -225,55 +211,18 @@ int main() {
     for (u64 i {0}; i < total_size; ++i)
         mem[i] = (u8)i;
 
-    /*
-    for (u64 mem_size {4096}; mem_size <= total_size; mem_size<<=1) {
-        std::string name;
-        if (mem_size < (1 << 20))
-            name = std::to_string(mem_size >> 10) + "KiB";
-        else if (mem_size < (1 << 30))
-            name = std::to_string(mem_size >> 20) + "MiB";
-        else
-            name = std::to_string(mem_size >> 30) + "GiB";
-        RepetitionTester tester{name.c_str(), total_size, 10, false};
-        while(tester.start()) {
-            Read_mem(mem, total_size, mem_size - 1);
-            tester.stop();
-        }
-    }
-    */
-    /*
-    for (u64 mem_size {4096}; mem_size <= total_size; mem_size += (closest_pw2(mem_size) >> 2)) {
-        u64 outer_count {total_size / mem_size};
-        std::string name = std::to_string(mem_size >> 10) + "KiB";
-        RepetitionTester tester{name.c_str(), mem_size * outer_count, 10, false};
-        while(tester.start()) {
-            Read_mem2(mem, outer_count, mem_size);
-            tester.stop();
-        }
-    }
-    */
-    for (u64 mem_size {4096}; mem_size < total_size; mem_size<<=1) {
-        std::string name;
-        if (mem_size < (1 << 20))
-            name = std::to_string(mem_size >> 10) + "KiB";
-        else if (mem_size < (1 << 30))
-            name = std::to_string(mem_size >> 20) + "MiB";
-        else
-            name = std::to_string(mem_size >> 30) + "GiB";
+    u64 outer_count = (1024 * 1024 * 1024) / 4096;
+
+    for (u64 n_way_count {1}, inner_count{32}; n_way_count < 64; n_way_count<<=1, inner_count>>=1) {
+        std::string name = std::to_string(n_way_count) + "-way associative test (" + std::to_string(inner_count * 2) + " sub-addrs)";
         {
-            RepetitionTester tester{(name + " aligned").c_str(), total_size, 10, false};
+            RepetitionTester tester{name.c_str(), total_size, 10, false};
             while(tester.start()) {
-                Read_mem_32_aligned(mem, total_size, mem_size - 1);
-                tester.stop();
-            }
-        }
-        {
-            RepetitionTester tester{(name + " unaligned").c_str(), total_size, 10, false};
-            while(tester.start()) {
-                Read_mem_32_unaligned(mem, total_size, mem_size - 1);
+                Read_mem_cache_set(mem, outer_count, n_way_count, inner_count);
                 tester.stop();
             }
         }
     }
+
     return EXIT_SUCCESS;
 }

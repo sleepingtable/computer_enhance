@@ -13,7 +13,7 @@ using u8 = uint8_t;
 using u64 = uint64_t;
 using f64 = double;
 
-static size_t total_size {1ULL << 30};
+static size_t total_size {1ULL << 34};
 
 
 u64 read_os_timer() {
@@ -203,74 +203,42 @@ void touch_memory(u8* tab) {
 }
 
 
-extern "C" void Read_mem(u8 *, u64, u64);
-extern "C" void Read_mem2(u8 *, u64, u64);
-extern "C" void Read_mem_32_aligned(u8 *, u64, u64);
-extern "C" void Read_mem_32_unaligned(u8 *, u64, u64);
-
-
-u64 closest_pw2(u64 x) {
-    x |= (x >> 1);
-    x |= (x >> 2);
-    x |= (x >> 4);
-    x |= (x >> 8);
-    x |= (x >> 16);
-    x |= (x >> 32);
-    return x - (x >> 1);
-}
+extern "C" void read_write_temporal(u8 *, u64, u64, u8 *);
+extern "C" void read_write_non_temporal(u8 *, u64, u64, u8 *);
 
 
 int main() {
     auto mem = alloc_mem();
     for (u64 i {0}; i < total_size; ++i)
         mem[i] = (u8)i;
+    auto mem2 = alloc_mem();
+    for (u64 i {0}; i < total_size; ++i)
+        mem[i] = (u8)i;
 
-    /*
-    for (u64 mem_size {4096}; mem_size <= total_size; mem_size<<=1) {
-        std::string name;
-        if (mem_size < (1 << 20))
-            name = std::to_string(mem_size >> 10) + "KiB";
-        else if (mem_size < (1 << 30))
-            name = std::to_string(mem_size >> 20) + "MiB";
+    for (u64 inner_size {1024}; inner_size < total_size; inner_size<<=1) {
+        std::string inner_size_str;
+        if (inner_size < 1024)
+            inner_size_str = std::to_string(inner_size) + "B";
+        else if (inner_size < 1024 * 1024)
+            inner_size_str = std::to_string(inner_size / 1024) + "KiB";
+        else if (inner_size < 1024 * 1024 * 1024)
+            inner_size_str = std::to_string(inner_size / (1024 * 1024)) + "MiB";
         else
-            name = std::to_string(mem_size >> 30) + "GiB";
-        RepetitionTester tester{name.c_str(), total_size, 10, false};
-        while(tester.start()) {
-            Read_mem(mem, total_size, mem_size - 1);
-            tester.stop();
-        }
-    }
-    */
-    /*
-    for (u64 mem_size {4096}; mem_size <= total_size; mem_size += (closest_pw2(mem_size) >> 2)) {
-        u64 outer_count {total_size / mem_size};
-        std::string name = std::to_string(mem_size >> 10) + "KiB";
-        RepetitionTester tester{name.c_str(), mem_size * outer_count, 10, false};
-        while(tester.start()) {
-            Read_mem2(mem, outer_count, mem_size);
-            tester.stop();
-        }
-    }
-    */
-    for (u64 mem_size {4096}; mem_size < total_size; mem_size<<=1) {
-        std::string name;
-        if (mem_size < (1 << 20))
-            name = std::to_string(mem_size >> 10) + "KiB";
-        else if (mem_size < (1 << 30))
-            name = std::to_string(mem_size >> 20) + "MiB";
-        else
-            name = std::to_string(mem_size >> 30) + "GiB";
+            inner_size_str = std::to_string(inner_size / (1024 * 1024 * 1024)) + "GiB";
+
         {
-            RepetitionTester tester{(name + " aligned").c_str(), total_size, 10, false};
+            std::string name = "temporal stores (" + inner_size_str + ")";
+            RepetitionTester tester{name.c_str(), total_size, 5, false};
             while(tester.start()) {
-                Read_mem_32_aligned(mem, total_size, mem_size - 1);
+                read_write_temporal(mem, inner_size, total_size / inner_size, mem2);
                 tester.stop();
             }
         }
         {
-            RepetitionTester tester{(name + " unaligned").c_str(), total_size, 10, false};
+            std::string name = "non-temporal stores (" + inner_size_str + ")";
+            RepetitionTester tester{name.c_str(), total_size, 5, false};
             while(tester.start()) {
-                Read_mem_32_unaligned(mem, total_size, mem_size - 1);
+                read_write_non_temporal(mem, inner_size, total_size / inner_size, mem2);
                 tester.stop();
             }
         }

@@ -1,4 +1,4 @@
-all: haversine haversine_profiling haversine_generator fread_test page_faults write_loop write_speed_main read_speed_main read_widths_main cache_size_main
+all: haversine haversine_profiling haversine_generator fread_test page_faults write_loop write_speed_main read_speed_main read_widths_main cache_size_main cache_set non_temporal_stores_main
 
 haversine: haversine.cpp
 	g++ -std=c++20 -Wall -fopenmp haversine.cpp -o haversine
@@ -55,5 +55,16 @@ cache_size_main: cache_size_main.cpp cache_size.obj
 	clang++ -g -std=c++20 -Wall -O1 cache_size_main.cpp cache_size.obj -o cache_size_main
 	chmod +x cache_size_main
 
+cache_set: cache_set.cpp cache_size.obj
+	clang++ -g -std=c++20 -Wall -O1 cache_set.cpp cache_size.obj -o cache_set
+	chmod +x cache_set
+
+non_temporal_stores.obj: non_temporal_stores.asm
+	nasm -f elf64 -o non_temporal_stores.obj non_temporal_stores.asm
+
+non_temporal_stores_main: non_temporal_stores_main.cpp non_temporal_stores.obj
+	clang++ -g -std=c++20 -Wall -O1 non_temporal_stores_main.cpp non_temporal_stores.obj -o non_temporal_stores_main
+	chmod +x non_temporal_stores_main
+
 clean:
-	rm haversine haversine_profiling haversine_generator fread_test page_faults write_loop write_speed_main read_speed_main read_widths_main cache_size_main
+	rm haversine haversine_profiling haversine_generator fread_test page_faults write_loop write_speed_main read_speed_main read_widths_main cache_size_main cache_set non_temporal_stores_main
